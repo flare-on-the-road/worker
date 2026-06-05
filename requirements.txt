@@ -1,5 +1,7 @@
-requests
-boto3
-python-dotenv
-urllib3
-opencv-python
+boto3>=1.34.0
+botocore>=1.34.0
+requests>=2.31.0
+python-dotenv>=1.0.0
+opencv-python>=4.9.0
+numpy>=1.26.0
+urllib3>=2.0.0
