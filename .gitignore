@@ -367,3 +367,6 @@ pyrightconfig.json
 .ionide
 
 # End of https://www.toptal.com/developers/gitignore/api/python,flask,pycharm+all,visualstudiocode
+
+# 테스트용 이미지 디렉토리
+03_모델테스트용이미지/

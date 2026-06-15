@@ -5,13 +5,15 @@ import subprocess
 import tempfile
 import os
 import threading
-import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone, timedelta
 import logging
 from dotenv import load_dotenv
 from botocore.config import Config
 import urllib3
+
+from vision_client import call_vision_api
+from event_writer import write_event
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -89,10 +91,7 @@ class CCTVCapturePipeline:
     CYCLE_INTERVAL = 60    # 1분 사이클
     CAPTURE_TIMEOUT = 25   # CCTV당 ffmpeg 타임아웃 (초)
     CLEANUP_INTERVAL = 60  # 매 60사이클(1시간)마다 만료 이미지 정리
-    RETENTION_DAYS = 7     # R2 이미지 보관 기간
-    FIRE_UPLOAD_INTERVAL = 10   # 매 10사이클(10분)마다 화재 이미지 업로드
-
-    FIRE_IMAGES_DIR = os.path.join(os.path.dirname(__file__), '03_모델테스트용이미지')
+    RETENTION_DAYS = 1     # R2 이미지 보관 기간
 
     def __init__(self, api_key=None, duration_hours=24):
         self.api_key = api_key or ITS_API_KEY
@@ -104,8 +103,6 @@ class CCTVCapturePipeline:
         self._lock = threading.Lock()
 
         self.s3 = self._init_r2()
-        self.fire_images = self._load_fire_images()
-        self.fire_index = 0
 
     def _init_r2(self):
         if not (R2_ACCOUNT_ID and R2_ACCESS_KEY and R2_SECRET_KEY):
@@ -125,49 +122,6 @@ class CCTVCapturePipeline:
         except Exception as e:
             logger.error(f"❌ R2 초기화 실패: {e}")
             return None
-
-    # ── 화재 이미지 ──────────────────────────────────────────────────────────
-
-    def _load_fire_images(self):
-        if not os.path.exists(self.FIRE_IMAGES_DIR):
-            logger.warning(f"⚠ 화재 이미지 폴더 없음: {self.FIRE_IMAGES_DIR}")
-            return []
-        exts = {'.jpg', '.jpeg', '.png'}
-        files = sorted([
-            f for f in os.listdir(self.FIRE_IMAGES_DIR)
-            if os.path.splitext(f)[1].lower() in exts
-        ])
-        logger.info(f"✓ 화재 이미지 {len(files)}개 로드 ({self.FIRE_IMAGES_DIR})")
-        return files
-
-    def upload_fire_image(self):
-        if not self.fire_images:
-            return
-        fname = self.fire_images[self.fire_index % len(self.fire_images)]
-        self.fire_index += 1
-
-        fpath = os.path.join(self.FIRE_IMAGES_DIR, fname)
-        with open(fpath, 'rb') as f:
-            img_bytes = f.read()
-
-        slot = random.choice(SELECTED_CCTV_LOCATIONS)
-        kst = timezone(timedelta(hours=9))
-        timestamp = datetime.now(timezone.utc).astimezone(kst).strftime('%Y%m%d_%H%M%S')
-        filename = f"{timestamp}_{slot['location_name']}.jpg"
-        key = f"raw/{filename}"
-
-        if self.s3:
-            try:
-                self.s3.put_object(Bucket=R2_BUCKET_NAME, Key=key, Body=img_bytes, ContentType='image/jpeg')
-                logger.info(f"  ✓ [화재이미지] R2 업로드: {key} ({fname} → {slot['display_name']} 슬롯)")
-            except Exception as e:
-                logger.error(f"  ❌ [화재이미지] R2 업로드 실패: {e}")
-        else:
-            local_dir = os.path.join(os.path.dirname(__file__), 'raw')
-            os.makedirs(local_dir, exist_ok=True)
-            with open(os.path.join(local_dir, filename), 'wb') as f:
-                f.write(img_bytes)
-            logger.info(f"  ✓ [화재이미지] 로컬 저장: {filename} ({fname} → {slot['display_name']} 슬롯)")
 
     # ── ITS API ──────────────────────────────────────────────────────────────
 
@@ -374,7 +328,7 @@ class CCTVCapturePipeline:
     # ── 1개 CCTV 처리 ────────────────────────────────────────────────────────
 
     def process_location(self, location):
-        """URL 갱신 → 캡처 → 비동기 업로드"""
+        """URL 갱신 → 캡처 → Vision AI 탐지 → 이벤트 기록 → R2 업로드"""
         name = location['display_name']
         logger.info(f"▶ {name} 처리 시작")
 
@@ -386,7 +340,21 @@ class CCTVCapturePipeline:
         if not img:
             return False
 
-        # 업로드는 별도 스레드에서 처리 (캡처 사이클을 블록하지 않음)
+        # 1차 탐지: Vision API (RT-DETRv2)
+        vision_result = call_vision_api(img, name)
+
+        if vision_result and vision_result.get('summary', {}).get('risk_candidate'):
+            # VLM 2차 판단 자리 (사용자 주도로 추후 구현)
+            # is_fire, vlm_reason = call_vlm(img, vision_result)
+
+            # 현재: 1차 탐지 결과만으로 이벤트 기록 (is_fire=None → VLM 미판단 상태)
+            threading.Thread(
+                target=write_event,
+                args=(location, vision_result),
+                daemon=True,
+            ).start()
+
+        # R2 업로드는 탐지 여부와 무관하게 항상 보관
         threading.Thread(
             target=self.upload_image,
             args=(img, location),
@@ -440,8 +408,6 @@ class CCTVCapturePipeline:
 
         cycle_no = 0
         self.cleanup_expired_images()  # 시작 시 1회 정리
-        if self.fire_images:
-            threading.Thread(target=self.upload_fire_image, daemon=True).start()
 
         try:
             while self.is_running:
@@ -459,10 +425,6 @@ class CCTVCapturePipeline:
                 # 매 CLEANUP_INTERVAL 사이클마다 만료 이미지 정리
                 if cycle_no % self.CLEANUP_INTERVAL == 0:
                     threading.Thread(target=self.cleanup_expired_images, daemon=True).start()
-
-                # 매 FIRE_UPLOAD_INTERVAL 사이클마다 화재 이미지 업로드
-                if cycle_no % self.FIRE_UPLOAD_INTERVAL == 0 and self.fire_images:
-                    threading.Thread(target=self.upload_fire_image, daemon=True).start()
 
                 wait = max(0.0, self.CYCLE_INTERVAL - cycle_elapsed)
                 if wait > 0 and self.is_running:
