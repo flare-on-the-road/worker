@@ -90,7 +90,7 @@ class CCTVCapturePipeline:
 
     CYCLE_INTERVAL = 60    # 1분 사이클
     CAPTURE_TIMEOUT = 25   # CCTV당 ffmpeg 타임아웃 (초)
-    CLEANUP_INTERVAL = 60  # 매 60사이클(1시간)마다 만료 이미지 정리
+    CLEANUP_INTERVAL = 1440  # 매 1440사이클(24시간)마다 만료 이미지 정리
     RETENTION_DAYS = 1     # R2 이미지 보관 기간
 
     def __init__(self, api_key=None, duration_hours=24):
@@ -241,17 +241,16 @@ class CCTVCapturePipeline:
 
     # ── R2 / 로컬 저장 ───────────────────────────────────────────────────────
 
-    def upload_image(self, img_bytes, location):
-        """R2에 업로드; R2 미설정 시 로컬 저장"""
-        # 한국표준시(KST, UTC+9)로 변환
-        kst = timezone(timedelta(hours=9))
-        kst_now = datetime.now(timezone.utc).astimezone(kst)
-        timestamp = kst_now.strftime('%Y%m%d_%H%M%S')
-        
-        # 파일명은 '날짜_시간_카메라위치.jpg'
-        filename = f"{timestamp}_{location['location_name']}.jpg"
-        key = f"raw/{filename}"
+    def upload_image(self, img_bytes, location, key: str = None):
+        """R2에 업로드; R2 미설정 시 로컬 저장. key를 지정하지 않으면 raw/로 자동 생성."""
         display_name = location['display_name']
+
+        if key is None:
+            kst = timezone(timedelta(hours=9))
+            kst_now = datetime.now(timezone.utc).astimezone(kst)
+            timestamp = kst_now.strftime('%Y%m%d_%H%M%S')
+            filename = f"{timestamp}_{location['location_name']}.jpg"
+            key = f"raw/{filename}"
 
         if self.s3:
             try:
@@ -266,8 +265,10 @@ class CCTVCapturePipeline:
             except Exception as e:
                 logger.error(f"  ❌ [{display_name}] R2 업로드 실패: {e}")
 
-        # 로컬 fallback (raw/ 폴더에 저장)
-        local_dir = os.path.join(os.path.dirname(__file__), 'raw')
+        # 로컬 fallback (prefix/filename 구조 유지)
+        filename = key.split('/')[-1]
+        prefix = key.split('/')[0]
+        local_dir = os.path.join(os.path.dirname(__file__), prefix)
         os.makedirs(local_dir, exist_ok=True)
         local_path = os.path.join(local_dir, filename)
         with open(local_path, 'wb') as f:
@@ -278,7 +279,7 @@ class CCTVCapturePipeline:
     # ── R2 만료 이미지 정리 ──────────────────────────────────────────────────
 
     def cleanup_expired_images(self):
-        """7일 이상 된 R2 이미지 일괄 삭제 (로컬도 동일 처리)"""
+        """RETENTION_DAYS 이상 된 R2 이미지 일괄 삭제 (로컬도 동일 처리)"""
         cutoff = datetime.now(timezone.utc) - timedelta(days=self.RETENTION_DAYS)
 
         if self.s3:
@@ -325,6 +326,12 @@ class CCTVCapturePipeline:
         if deleted:
             logger.info(f"🧹 로컬 만료 이미지 {deleted}개 삭제 완료")
 
+    # ── fire/smoke 이벤트 처리 (write → VLM → patch) ─────────────────────────
+
+    def _handle_fire_event(self, location: dict, vision_result: dict, snapshot_key: str):
+        """이벤트 저장 (VLM 결과는 vision_result["vlm"]에 이미 포함)."""
+        write_event(location, vision_result, snapshot_key)
+
     # ── 1개 CCTV 처리 ────────────────────────────────────────────────────────
 
     def process_location(self, location):
@@ -340,26 +347,43 @@ class CCTVCapturePipeline:
         if not img:
             return False
 
+        # snapshot_key를 스레드 분기 전에 미리 계산 (DB + R2 양쪽에 동일 키 사용)
+        kst = timezone(timedelta(hours=9))
+        timestamp = datetime.now(timezone.utc).astimezone(kst).strftime('%Y%m%d_%H%M%S')
+        filename = f"{timestamp}_{location['location_name']}.jpg"
+        snapshot_key = f"raw/{filename}"
+
+        # R2 raw/ 업로드는 탐지 여부와 무관하게 항상 수행
+        threading.Thread(
+            target=self.upload_image,
+            args=(img, location, snapshot_key),
+            daemon=True,
+        ).start()
+
         # 1차 탐지: Vision API (RT-DETRv2)
         vision_result = call_vision_api(img, name)
 
-        if vision_result and vision_result.get('summary', {}).get('risk_candidate'):
-            # VLM 2차 판단 자리 (사용자 주도로 추후 구현)
-            # is_fire, vlm_reason = call_vlm(img, vision_result)
+        if vision_result:
+            detected_classes = list({
+                d["class_name"] for d in vision_result.get("risk_detections", [])
+            })
+            fire_or_smoke = any(c in detected_classes for c in ("fire", "smoke"))
 
-            # 현재: 1차 탐지 결과만으로 이벤트 기록 (is_fire=None → VLM 미판단 상태)
-            threading.Thread(
-                target=write_event,
-                args=(location, vision_result),
-                daemon=True,
-            ).start()
+            if fire_or_smoke:
+                # R2 detection/ 추가 업로드
+                detection_key = f"detection/{filename}"
+                threading.Thread(
+                    target=self.upload_image,
+                    args=(img, location, detection_key),
+                    daemon=True,
+                ).start()
 
-        # R2 업로드는 탐지 여부와 무관하게 항상 보관
-        threading.Thread(
-            target=self.upload_image,
-            args=(img, location),
-            daemon=True,
-        ).start()
+                # 이벤트 저장 (VLM은 AI 서버 /predict 내부에서 처리됨)
+                threading.Thread(
+                    target=self._handle_fire_event,
+                    args=(location, vision_result, snapshot_key),
+                    daemon=True,
+                ).start()
 
         with self._lock:
             self.total_captures += 1
