@@ -1,3 +1,4 @@
+import base64
 import time
 import requests
 import boto3
@@ -370,18 +371,20 @@ class CCTVCapturePipeline:
             fire_or_smoke = any(c in detected_classes for c in ("fire", "smoke"))
 
             if fire_or_smoke:
-                # R2 detection/ 추가 업로드
+                # R2 detection/ 업로드 — bbox 그린 이미지 사용 (없으면 raw fallback)
                 detection_key = f"detection/{filename}"
+                annotated_b64 = vision_result.get("annotated_image_b64")
+                detection_img = base64.b64decode(annotated_b64) if annotated_b64 else img
                 threading.Thread(
                     target=self.upload_image,
-                    args=(img, location, detection_key),
+                    args=(detection_img, location, detection_key),
                     daemon=True,
                 ).start()
 
-                # 이벤트 저장 (VLM은 AI 서버 /predict 내부에서 처리됨)
+                # 이벤트 저장 — snapshot_key는 bbox 이미지(detection/)를 가리켜야 함
                 threading.Thread(
                     target=self._handle_fire_event,
-                    args=(location, vision_result, snapshot_key),
+                    args=(location, vision_result, detection_key),
                     daemon=True,
                 ).start()
 
