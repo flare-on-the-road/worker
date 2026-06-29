@@ -27,7 +27,7 @@ def write_event(
         return None
 
     url = f"{BACKEND_API_URL.rstrip('/')}/api/events"
-    vlm = vision_result.get("vlm") or {}
+    vlm_results = vision_result.get("vlm") or []
     detections = [
         {
             "label": d["class_name"],
@@ -37,15 +37,21 @@ def write_event(
         for d in vision_result.get("detections", [])
     ]
 
+    # fire/smoke 중 오탐아님이 하나라도 있으면 화재 확정
+    is_fire = any(
+        r["class_name"] in ("fire", "smoke") and not r["is_false_positive"]
+        for r in vlm_results
+    )
+
     payload = {
         "cctv_id": location["id"],
         "cctv_name": location["display_name"],
         "location_name": location["location_name"],
         "detected_at": datetime.now(timezone.utc).astimezone(KST).isoformat(),
-        "is_fire": vlm.get("is_fire"),
+        "is_fire": is_fire,
+        "vlm_results": vlm_results,
         "detections": detections,
         "snapshot_key": snapshot_key,
-        "vlm_reason": vlm.get("reason"),
     }
 
     try:
@@ -74,8 +80,7 @@ def write_event(
 
 def patch_event_vlm(
     event_id: int,
-    is_fire: bool,
-    vlm_reason: Optional[str],
+    vlm_results: list,
     display_name: str,
 ) -> bool:
     """
@@ -85,8 +90,13 @@ def patch_event_vlm(
     if not BACKEND_API_URL:
         return False
 
+    is_fire = any(
+        r["class_name"] in ("fire", "smoke") and not r["is_false_positive"]
+        for r in vlm_results
+    )
+
     url = f"{BACKEND_API_URL.rstrip('/')}/api/events/{event_id}"
-    payload = {"is_fire": is_fire, "vlm_reason": vlm_reason}
+    payload = {"is_fire": is_fire, "vlm_results": vlm_results}
 
     try:
         resp = requests.patch(url, json=payload, timeout=BACKEND_TIMEOUT)

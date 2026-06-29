@@ -374,22 +374,33 @@ class CCTVCapturePipeline:
             ]
 
             if vlm_candidates:
-                # R2 detection/ 업로드 — bbox 그린 이미지 사용 (없으면 raw fallback)
-                detection_key = f"detection/{filename}"
-                annotated_b64 = vision_result.get("annotated_image_b64")
-                detection_img = base64.b64decode(annotated_b64) if annotated_b64 else img
-                threading.Thread(
-                    target=self.upload_image,
-                    args=(detection_img, location, detection_key),
-                    daemon=True,
-                ).start()
+                vlm_results = vision_result.get("vlm") or []
 
-                # 이벤트 저장 — snapshot_key는 bbox 이미지(detection/)를 가리켜야 함
-                threading.Thread(
-                    target=self._handle_fire_event,
-                    args=(location, vision_result, detection_key),
-                    daemon=True,
-                ).start()
+                # carlight 오탐아님만 있는 경우 저장 생략 (아무 의미 없는 탐지)
+                should_save = any(
+                    not (r["class_name"] == "carlight" and not r["is_false_positive"])
+                    for r in vlm_results
+                ) if vlm_results else True
+
+                if should_save:
+                    # R2 detection/ 업로드 — bbox 그린 이미지 사용 (없으면 raw fallback)
+                    detection_key = f"detection/{filename}"
+                    annotated_b64 = vision_result.get("annotated_image_b64")
+                    detection_img = base64.b64decode(annotated_b64) if annotated_b64 else img
+                    threading.Thread(
+                        target=self.upload_image,
+                        args=(detection_img, location, detection_key),
+                        daemon=True,
+                    ).start()
+
+                    # 이벤트 저장 — snapshot_key는 bbox 이미지(detection/)를 가리켜야 함
+                    threading.Thread(
+                        target=self._handle_fire_event,
+                        args=(location, vision_result, detection_key),
+                        daemon=True,
+                    ).start()
+                else:
+                    logger.info(f"  ⏭ [{name}] carlight 오탐아님 → 저장 생략")
 
         with self._lock:
             self.total_captures += 1
