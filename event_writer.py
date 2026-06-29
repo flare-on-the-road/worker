@@ -37,10 +37,13 @@ def write_event(
         for d in vision_result.get("detections", [])
     ]
 
-    # fire/smoke 중 오탐아님이 하나라도 있으면 화재 확정
-    is_fire = any(
-        r["class_name"] in ("fire", "smoke") and not r["is_false_positive"]
-        for r in vlm_results
+    # VLM 판단 미완료(빈 결과)는 None, 판단 완료 시 fire/smoke 오탐아님 존재 여부로 결정
+    is_fire = (
+        None if not vlm_results else
+        any(
+            r["class_name"] in ("fire", "smoke") and not r["is_false_positive"]
+            for r in vlm_results
+        )
     )
 
     payload = {

@@ -35,8 +35,8 @@ R2_ACCESS_KEY = os.getenv('CF_ACCESS_KEY', '')
 R2_SECRET_KEY = os.getenv('CF_SECRET_KEY', '')
 R2_BUCKET_NAME = os.getenv('CF_BUCKET_NAME', '')
 
-VLM_CONF_LOW = 0.6
-VLM_CONF_HIGH = 0.8
+VLM_CONF_LOW = float(os.getenv("VLM_CONF_LOW", "0.6"))
+VLM_CONF_HIGH = float(os.getenv("VLM_CONF_HIGH", "0.8"))
 
 # 선정된 5개 CCTV (전부 터널 CCTV로 구성)
 # search_regions: 여러 후보 좌표를 순서대로 시도해 CCTV를 탐색
@@ -368,39 +368,50 @@ class CCTVCapturePipeline:
         vision_result = call_vision_api(img, name)
 
         if vision_result:
+            detections = vision_result.get("detections", [])
             vlm_candidates = [
-                d for d in vision_result.get("detections", [])
+                d for d in detections
                 if VLM_CONF_LOW <= d["confidence"] <= VLM_CONF_HIGH
             ]
+            vlm_results = vision_result.get("vlm") or []
+
+            # >0.8 고신뢰도 fire/smoke는 VLM 없이 직접 저장
+            has_high_conf_fire_smoke = any(
+                d["class_name"] in ("fire", "smoke") and d["confidence"] > VLM_CONF_HIGH
+                for d in detections
+            )
 
             if vlm_candidates:
-                vlm_results = vision_result.get("vlm") or []
-
                 # carlight 오탐아님만 있는 경우 저장 생략 (아무 의미 없는 탐지)
-                should_save = any(
-                    not (r["class_name"] == "carlight" and not r["is_false_positive"])
-                    for r in vlm_results
-                ) if vlm_results else True
+                vlm_should_save = (
+                    any(
+                        not (r["class_name"] == "carlight" and not r["is_false_positive"])
+                        for r in vlm_results
+                    ) if vlm_results else True
+                )
+                should_save = vlm_should_save or has_high_conf_fire_smoke
+            else:
+                should_save = has_high_conf_fire_smoke
 
-                if should_save:
-                    # R2 detection/ 업로드 — bbox 그린 이미지 사용 (없으면 raw fallback)
-                    detection_key = f"detection/{filename}"
-                    annotated_b64 = vision_result.get("annotated_image_b64")
-                    detection_img = base64.b64decode(annotated_b64) if annotated_b64 else img
-                    threading.Thread(
-                        target=self.upload_image,
-                        args=(detection_img, location, detection_key),
-                        daemon=True,
-                    ).start()
+            if should_save:
+                # R2 detection/ 업로드 — bbox 그린 이미지 사용 (없으면 raw fallback)
+                detection_key = f"detection/{filename}"
+                annotated_b64 = vision_result.get("annotated_image_b64")
+                detection_img = base64.b64decode(annotated_b64) if annotated_b64 else img
+                threading.Thread(
+                    target=self.upload_image,
+                    args=(detection_img, location, detection_key),
+                    daemon=True,
+                ).start()
 
-                    # 이벤트 저장 — snapshot_key는 bbox 이미지(detection/)를 가리켜야 함
-                    threading.Thread(
-                        target=self._handle_fire_event,
-                        args=(location, vision_result, detection_key),
-                        daemon=True,
-                    ).start()
-                else:
-                    logger.info(f"  ⏭ [{name}] carlight 오탐아님 → 저장 생략")
+                # 이벤트 저장 — snapshot_key는 bbox 이미지(detection/)를 가리켜야 함
+                threading.Thread(
+                    target=self._handle_fire_event,
+                    args=(location, vision_result, detection_key),
+                    daemon=True,
+                ).start()
+            else:
+                logger.info(f"  ⏭ [{name}] carlight 오탐아님 → 저장 생략")
 
         with self._lock:
             self.total_captures += 1
