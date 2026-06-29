@@ -27,21 +27,23 @@ def write_event(
         return None
 
     url = f"{BACKEND_API_URL.rstrip('/')}/api/events"
-    summary = vision_result.get("summary", {})
-    detected_classes = list({
-        d["class_name"] for d in vision_result.get("risk_detections", [])
-    })
-
     vlm = vision_result.get("vlm") or {}
+    detections = [
+        {
+            "label": d["class_name"],
+            "confidence": round(d["confidence"], 4),
+            "bbox": d.get("bbox", []),
+        }
+        for d in vision_result.get("detections", [])
+    ]
+
     payload = {
         "cctv_id": location["id"],
         "cctv_name": location["display_name"],
         "location_name": location["location_name"],
         "detected_at": datetime.now(timezone.utc).astimezone(KST).isoformat(),
-        "risk_score": summary.get("risk_score", 0),
-        "risk_candidate": summary.get("risk_candidate", False),
         "is_fire": vlm.get("is_fire"),
-        "detected_classes": detected_classes,
+        "detections": detections,
         "snapshot_key": snapshot_key,
         "vlm_reason": vlm.get("reason"),
     }
@@ -52,7 +54,7 @@ def write_event(
         event_id = resp.json().get("id")
         logger.info(
             f"  ✓ [{location['display_name']}] 이벤트 저장 완료 "
-            f"(id={event_id}, risk_score={payload['risk_score']})"
+            f"(id={event_id}, detections={len(payload['detections'])}개)"
         )
         return event_id
 

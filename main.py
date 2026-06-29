@@ -35,6 +35,9 @@ R2_ACCESS_KEY = os.getenv('CF_ACCESS_KEY', '')
 R2_SECRET_KEY = os.getenv('CF_SECRET_KEY', '')
 R2_BUCKET_NAME = os.getenv('CF_BUCKET_NAME', '')
 
+VLM_CONF_LOW = 0.6
+VLM_CONF_HIGH = 0.8
+
 # 선정된 5개 CCTV (전부 터널 CCTV로 구성)
 # search_regions: 여러 후보 좌표를 순서대로 시도해 CCTV를 탐색
 SELECTED_CCTV_LOCATIONS = [
@@ -365,12 +368,12 @@ class CCTVCapturePipeline:
         vision_result = call_vision_api(img, name)
 
         if vision_result:
-            detected_classes = list({
-                d["class_name"] for d in vision_result.get("risk_detections", [])
-            })
-            fire_or_smoke = any(c in detected_classes for c in ("fire", "smoke"))
+            vlm_candidates = [
+                d for d in vision_result.get("detections", [])
+                if VLM_CONF_LOW <= d["confidence"] <= VLM_CONF_HIGH
+            ]
 
-            if fire_or_smoke:
+            if vlm_candidates:
                 # R2 detection/ 업로드 — bbox 그린 이미지 사용 (없으면 raw fallback)
                 detection_key = f"detection/{filename}"
                 annotated_b64 = vision_result.get("annotated_image_b64")

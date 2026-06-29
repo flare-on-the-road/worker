@@ -37,14 +37,13 @@ def call_vision_api(
         result = resp.json()
 
         summary = result.get("summary", {})
-        risk_candidate = summary.get("risk_candidate", False)
-        risk_score = summary.get("risk_score", 0)
+        risk_count = summary.get("risk_detection_count", 0)
+        max_conf = summary.get("max_confidence", 0.0)
 
-        if risk_candidate:
+        if risk_count > 0:
             logger.info(
                 f"  🔥 [{display_name}] 위험 탐지! "
-                f"risk_score={risk_score} | "
-                f"risk_detections={summary.get('risk_detection_count', 0)}개"
+                f"risk={risk_count}개 | max_conf={max_conf:.2f}"
             )
         else:
             logger.info(
