@@ -69,12 +69,12 @@ SELECTED_CCTV_LOCATIONS = [
         ],
     },
     {
-        'id': 'goduck_tunnel_2',
-        'display_name': '[세종포천선] 고덕터널(방아다리)',
-        'location_name': '고덕터널(방아다리)',
-        'search_names': ['고덕터널', '방아다리터널'],  # 가칭이었던 방아다리터널과 공식 명칭 포함
+        'id': 'godeok_tunnel',
+        'display_name': '[세종포천선] 고덕터널',
+        'location_name': '고덕터널',
+        'search_names': ['[세종] 고덕터널', '고덕터널', '세종 2'],  # ITS API에 등록된 실제 카메라명 및 키워드
         'search_regions': [
-            {'lat': 37.5485, 'lon': 127.1682, 'delta': 0.05},  # 세종포천선 고덕터널(방아다리) 확인된 좌표
+            {'lat': 37.5436, 'lon': 127.1685, 'delta': 0.05},  # 세종포천선 고덕터널 (세종 2) 확인된 좌표
         ],
     },
     {
