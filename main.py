@@ -69,21 +69,21 @@ SELECTED_CCTV_LOCATIONS = [
         ],
     },
     {
-        'id': 'gwanggyo_tunnel',
-        'display_name': '[영동선] 광교터널',
-        'location_name': '광교터널',
-        'search_names': ['[인천1]광교터널(인천1 1 고정)', '인천1 1 고정'],
+        'id': 'godeok_tunnel',
+        'display_name': '[세종포천선] 고덕터널',
+        'location_name': '고덕터널',
+        'search_names': ['고덕터널', '방아다리터널'],  # 가칭이었던 방아다리터널과 공식 명칭 포함
         'search_regions': [
-            {'lat': 37.306575, 'lon': 127.037347, 'delta': 0.05},  # 영동선 광교터널 확인된 좌표
-        ],
+            {'lat': 37.5485, 'lon': 127.1682, 'delta': 0.05},  # 세종포천선 고덕터널 확인된 좌표
+    ],
     },
     {
-        'id': 'maseong_tunnel',
-        'display_name': '[영동선] 마성터널(인천)',
-        'location_name': '마성터널',
-        'search_names': ['[인천1]마성터널(인천1 4)', '인천1 4'],
+        'id': 'dallaenae_2',
+        'display_name': '[경부선] 달래내2',
+        'location_name': '달래내고개',
+        'search_names': ['달래내2', '달래내'],
         'search_regions': [
-            {'lat': 37.285983, 'lon': 127.165356, 'delta': 0.05},  # 영동선 마성터널 확인된 좌표
+            {'lat': 37.4208, 'lon': 127.0545, 'delta': 0.05},  # 경부선 달래내2 확인된 좌표
         ],
     },
 ]
