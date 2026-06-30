@@ -39,12 +39,12 @@ R2_BUCKET_NAME = os.getenv('CF_BUCKET_NAME', '')
 # search_regions: 여러 후보 좌표를 순서대로 시도해 CCTV를 탐색
 SELECTED_CCTV_LOCATIONS = [
     {
-        'id': 'goduck_tunnel',
-        'display_name': '[세종] 고덕터널',
-        'location_name': '고덕터널',
+        'id': 'goduck_tunnel_1',
+        'display_name': '[세종] 고덕터널(세종12)',
+        'location_name': '고덕터널(세종12)',
         'search_names': ['고덕터널(세종 12)', '세종 12)'],
         'search_regions': [
-            {'lat': 37.5472, 'lon': 127.1562, 'delta': 0.05},  # 세종포천선 고덕터널 확인된 좌표
+            {'lat': 37.5472, 'lon': 127.1562, 'delta': 0.05},  # 세종포천선 고덕터널(세종12) 확인된 좌표
         ],
     },
     {
@@ -66,13 +66,13 @@ SELECTED_CCTV_LOCATIONS = [
         ],
     },
     {
-        'id': 'godeok_tunnel',
-        'display_name': '[세종포천선] 고덕터널',
-        'location_name': '고덕터널',
+        'id': 'goduck_tunnel_2',
+        'display_name': '[세종포천선] 고덕터널(방아다리)',
+        'location_name': '고덕터널(방아다리)',
         'search_names': ['고덕터널', '방아다리터널'],  # 가칭이었던 방아다리터널과 공식 명칭 포함
         'search_regions': [
-            {'lat': 37.5485, 'lon': 127.1682, 'delta': 0.05},  # 세종포천선 고덕터널 확인된 좌표
-    ],
+            {'lat': 37.5485, 'lon': 127.1682, 'delta': 0.05},  # 세종포천선 고덕터널(방아다리) 확인된 좌표
+        ],
     },
     {
         'id': 'dallaenae_2',
